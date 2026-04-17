@@ -1,0 +1,68 @@
+# ============================================================
+# .gitignore - GitHubリポジトリに含めないファイル/フォルダ一覧
+# ============================================================
+
+# --- ローカル開発環境設定 ---
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# --- OS 固有ファイル ---
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.Trash-*
+
+# --- エディタの一時ファイル ---
+*.swp
+*.swo
+*.bak
+*.tmp
+*~
+
+# --- Node.js（開発サーバーに使った場合） ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# --- ログファイル ---
+*.log
+logs/
+
+# --- ビルド成果物（このプロジェクトではビルド不要だが念のため） ---
+dist/
+build/
+out/
+
+# --- 環境変数・秘密情報（万が一作成された場合の予防） ---
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# --- テスト用MP3ファイル（動作確認用で配布対象外） ---
+*.mp3
+*.m4a
+*.wav
+*.flac
+
+# --- その他 ---
+*.orig
+*.rej
