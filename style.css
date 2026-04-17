@@ -1,0 +1,958 @@
+/* ============================================================
+   PWA MP3 Player - スタイルシート
+
+   設計方針:
+   - ダークテーマ（深宇宙をイメージした濃紺・紫系）
+   - モバイルファースト（iOS/Android対応）
+   - CSS カスタムプロパティでテーマ管理（将来的なテーマ変更を容易に）
+   - iOS PWA のセーフエリア（ノッチ・ホームバー）に対応
+   - タッチ操作最適化（tap highlight 除去、touch-action 制御）
+   ============================================================ */
+
+/* ============================================================
+   リセット・ボックスモデル統一
+   すべての要素でborder-boxを使い、マージン・パディングを初期化する
+   ============================================================ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ============================================================
+   CSS カスタムプロパティ（デザイントークン）
+
+   カラーパレット: 深宇宙テーマ
+   - bg-primary: 最深部の背景色
+   - bg-secondary: ヘッダーなどの中間背景
+   - bg-card: カード・リストアイテムの背景
+   - bg-hover: ホバー時の背景
+   - accent: メインアクセントカラー（紫）
+   - accent-light: 明るいアクセント（ハンドル・テキスト用）
+   - accent-glow: グロー効果用の半透明アクセント
+   ============================================================ */
+:root {
+  /* --- 背景色階層 --- */
+  --bg-primary:   #0a0a1e;   /* ページ背景（最も暗い） */
+  --bg-secondary: #12122a;   /* ヘッダー・フッター背景 */
+  --bg-card:      #1a1a3e;   /* カード・入力フィールド */
+  --bg-hover:     #252550;   /* ホバー・アクティブ状態 */
+
+  /* --- テキスト色 --- */
+  --text-primary:   #e8e8ff; /* メインテキスト（薄い青白） */
+  --text-secondary: #8888aa; /* サブテキスト・ラベル */
+
+  /* --- アクセントカラー（紫系） --- */
+  --accent:      #6c5ce7;              /* メインアクセント */
+  --accent-light: #a29bfe;             /* 明るいアクセント */
+  --accent-glow:  rgba(108, 92, 231, 0.3); /* グロー用半透明 */
+
+  /* --- ステータスカラー --- */
+  --danger:  #e74c3c; /* 削除・エラー */
+  --success: #2ecc71; /* 成功・OK */
+  --warning: #f39c12; /* 警告 */
+
+  /* --- UI共通 --- */
+  --border:    #2a2a4a; /* ボーダー色 */
+  --radius:    12px;    /* 大きめの角丸 */
+  --radius-sm: 8px;     /* 小さめの角丸 */
+
+  /* --- iOS セーフエリア（ノッチ・Dynamic Island 対応） --- */
+  --safe-top:    env(safe-area-inset-top,    0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ============================================================
+   HTML / BODY 基本設定
+   ============================================================ */
+html {
+  height: 100%;
+  /* iOS Safari でのフォントサイズ自動拡大を無効化 */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  /* システムフォント優先（iOS は -apple-system、Android は Noto Sans JP） */
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans',
+    'Noto Sans JP', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  /* タップ時のハイライト（青い半透明オーバーレイ）を除去 */
+  -webkit-tap-highlight-color: transparent;
+  /* iOS PWA のセーフエリアを考慮したパディング */
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+}
+
+/* ドラッグ＆ドロップ受付中のフルスクリーンオーバーレイ */
+body.drag-over::after {
+  content: 'MP3ファイルをドロップ';
+  position: fixed;
+  inset: 0;
+  background: rgba(108, 92, 231, 0.15);
+  border: 3px dashed var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  color: var(--accent-light);
+  z-index: 9999;
+  pointer-events: none; /* マウスイベントを下のDOMに透過させる */
+}
+
+/* ============================================================
+   ヘッダー
+   スクロールしても常に画面上部に固定（sticky）
+   ============================================================ */
+.header {
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100; /* プレイリストアイテムより前面に */
+}
+
+/* アプリ名ロゴ部分（音符アイコン + テキスト） */
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+/* 音符ロゴアイコン（角丸の紫い正方形） */
+.header-title .logo {
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+/* WebAssembly 動作状態バッジ（右上） */
+.wasm-badge {
+  font-size: 0.65rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  transition: all 0.3s;
+}
+
+/* Wasm アクティブ時：紫色でハイライト */
+.wasm-badge.active {
+  background: rgba(108, 92, 231, 0.2);
+  color: var(--accent-light);
+  border-color: var(--accent);
+}
+
+/* ============================================================
+   メインコンテンツ領域
+   最大幅600pxでセンタリングし、左右に8pxのパディングを確保
+   ============================================================ */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-width: 600px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 8px;
+}
+
+/* ============================================================
+   ビジュアライザー（スペクトラム表示 canvas）
+   DFT で計算した周波数スペクトラムを棒グラフで表示
+   ============================================================ */
+.visualizer-container {
+  width: 100%;
+  height: 120px;
+  margin: 12px 0 8px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
+/* canvas 要素は親コンテナいっぱいに広げる */
+.visualizer-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ============================================================
+   レベルメーター（RMS / Peak）
+
+   RMS  : 実効値（音圧の平均的な大きさ）→ 紫グラデーション
+   Peak : 瞬間最大値                     → 緑→黄→赤グラデーション
+   ============================================================ */
+.level-meters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 0 4px;
+}
+
+/* 1本のメーター行（ラベル + トラック） */
+.meter {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* "RMS" / "Peak" ラベル */
+.meter-label {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  width: 30px;
+  letter-spacing: 0.5px;
+}
+
+/* メーターのレール（グレーの溝） */
+.meter-track {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-card);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+/* 動的に幅が変わる充填バー（JSで .style.width を更新） */
+.meter-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  transition: width 0.05s linear; /* 素早く反応させるため短い遷移時間 */
+}
+
+/* RMS バー：紫グラデーション */
+.meter-fill.rms {
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+}
+
+/* Peak バー：音量に応じて色が変化するグラデーション */
+.meter-fill.peak {
+  background: linear-gradient(90deg, var(--success), var(--warning), var(--danger));
+}
+
+/* ============================================================
+   再生中トラック名表示
+   長い曲名は省略記号（…）で切り捨て
+   ============================================================ */
+.now-playing {
+  text-align: center;
+  padding: 8px 16px;
+}
+
+.track-title {
+  font-size: 1rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* ============================================================
+   シークバー
+
+   構造:
+   .seek-bar（タッチ可能な広いヒット領域 h=28px）
+     └ .seek-track（細い溝 h=4px）
+         ├ .seek-progress（再生済み部分 - 幅をJSで動的更新）
+         └ .seek-handle（ドラッグハンドル - 位置をJSで動的更新）
+   ============================================================ */
+.seek-container {
+  padding: 8px 16px 4px;
+}
+
+.seek-bar {
+  position: relative;
+  height: 28px;          /* タッチしやすい高さを確保 */
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  touch-action: none;    /* タッチスクロールをキャンセルしてシークに専念 */
+}
+
+.seek-track {
+  width: 100%;
+  height: 4px;
+  background: var(--bg-card);
+  border-radius: 2px;
+  position: relative;
+  overflow: visible;     /* ハンドルが外にはみ出せるよう */
+}
+
+/* 再生済み部分のプログレスバー */
+.seek-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-light));
+  border-radius: 2px;
+  width: 0%;             /* JSで更新: style.width = `${ratio * 100}%` */
+  pointer-events: none;
+}
+
+/* シークハンドル（丸いノブ） */
+.seek-handle {
+  position: absolute;
+  top: 50%;
+  left: 0%;              /* JSで更新: style.left = `${ratio * 100}%` */
+  width: 14px;
+  height: 14px;
+  background: var(--accent-light);
+  border-radius: 50%;
+  transform: translate(-50%, -50%); /* 中心を left の位置に合わせる */
+  box-shadow: 0 0 8px var(--accent-glow);
+  pointer-events: none;
+  transition: transform 0.1s;
+}
+
+/* ドラッグ中はハンドルを少し大きく表示 */
+.seek-bar:active .seek-handle {
+  transform: translate(-50%, -50%) scale(1.3);
+}
+
+/* 現在時刻 / 総再生時間の表示 */
+.time-display {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  padding: 2px 0;
+  /* 数字幅を固定（時間表示の横ガタつきを防ぐ） */
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   再生コントロールボタン群
+
+   配置: シャッフル | 前へ | 再生/一時停止（大） | 次へ | リピート
+   ============================================================ */
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 16px 12px;
+}
+
+/* 汎用コントロールボタン（シャッフル・前後・リピート・停止） */
+.ctrl-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* タップ時のフィードバック */
+.ctrl-btn:active {
+  transform: scale(0.9);
+}
+
+/* ホバー時（デスクトップ） */
+.ctrl-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+/* アクティブ状態（シャッフルON・リピートON）: アクセント色 */
+.ctrl-btn.active {
+  color: var(--accent-light);
+}
+
+/* 再生/一時停止ボタン（大きな丸いボタン、中央に配置） */
+.ctrl-btn.play-pause {
+  width: 56px;
+  height: 56px;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  margin: 0 8px;
+}
+
+.ctrl-btn.play-pause:hover {
+  background: var(--accent-light);
+  color: white;
+}
+
+.ctrl-btn.play-pause:active {
+  transform: scale(0.92);
+}
+
+/* ============================================================
+   ボリュームコントロール
+   アイコンボタン（タップでミュートトグル） + スライダー
+   ============================================================ */
+.volume-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 20px 12px;
+}
+
+/* スピーカーアイコンボタン */
+.volume-icon {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+}
+
+/* ボリュームスライダー（ブラウザデフォルトのスタイルを上書き） */
+.volume-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--bg-card);
+  border-radius: 2px;
+  outline: none;
+}
+
+/* スライダーのサム（WebKit: Chrome/Safari/iOS） */
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--accent-light);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* スライダーのサム（Firefox） */
+.volume-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--accent-light);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* ============================================================
+   プレイリストセクション
+
+   構造:
+   .playlist-section
+     ├ .playlist-header（ライブラリタイトル + ファイル追加ボタン）
+     └ .playlist（スクロール可能なトラックリスト）
+         └ .playlist-item × n（各トラック行）
+             ├ .drag-handle（ドラッグ並び替えハンドル）
+             ├ .track-info（番号・アートワーク・名前）クリックで再生
+             ├ .track-toggle（有効/無効トグルボタン）
+             └ .track-delete（削除ボタン）
+   ============================================================ */
+.playlist-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* flexboxでスクロール可能にするための設定 */
+}
+
+/* プレイリストヘッダー（タイトル行） */
+.playlist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.playlist-header h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* "N/M曲" のカウント表示 */
+.track-count {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* ファイル追加ボタン */
+.add-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 8px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.add-btn:active {
+  transform: scale(0.95);
+}
+
+.add-btn:hover {
+  background: var(--accent-light);
+}
+
+/* プレイリスト本体（縦スクロール） */
+.playlist {
+  flex: 1;
+  overflow-y: auto;
+  /* 下部にパディングを入れてトーストやインストールバナーと重ならないようにする */
+  padding: 0 8px 120px;
+  /* iOS のモメンタムスクロールを有効化 */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ============================================================
+   プレイリストアイテム（各トラック行）
+   ============================================================ */
+.playlist-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  margin: 2px 0;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
+  gap: 8px;
+}
+
+/* タップ時のフィードバック */
+.playlist-item:active {
+  background: var(--bg-hover);
+}
+
+/* 現在再生中のアイテム: 左端に紫のボーダー + 薄い紫背景 */
+.playlist-item.active {
+  background: rgba(108, 92, 231, 0.15);
+  border-left: 3px solid var(--accent);
+}
+
+/* トラック情報エリア（トラック番号・アートワーク・曲名） */
+.track-info {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0; /* flex子要素でテキスト省略を有効にするため */
+  cursor: pointer;
+}
+
+/* トラック番号（1, 2, 3...） */
+.track-number {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0; /* 幅を固定 */
+}
+
+/* 再生中のトラック番号はアクセント色 */
+.playlist-item.active .track-number {
+  color: var(--accent-light);
+}
+
+/* ============================================================
+   アートワークサムネイル
+
+   ID3v2 の APIC フレームから抽出した画像を表示（40×40px）
+   アートワークがない場合はプレースホルダー（音符アイコン）を表示
+   ============================================================ */
+
+/* 実際の画像 (<img> タグ) */
+.track-artwork {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;          /* 幅を固定して潰れないよう */
+  border-radius: 4px;
+  object-fit: cover;       /* 正方形にトリミング */
+  background: rgba(255, 255, 255, 0.06);
+  display: block;
+}
+
+/* アートワーク不在時のプレースホルダー（音符アイコン付き四角） */
+.track-artwork--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  /* 微妙なグラデーションで "画像がない" ことを視覚的に示す */
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.02)
+  );
+}
+
+/* 曲名・ファイルサイズのテキストエリア */
+.track-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0; /* テキスト省略のためのflex設定 */
+}
+
+/* 曲名（長い場合は省略記号で切り捨て） */
+.track-name {
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ファイルサイズなどのメタ情報 */
+.track-meta {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+/* 削除ボタン（ゴミ箱アイコン） */
+.track-delete {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: all 0.2s;
+}
+
+/* ホバー・タップ時は赤く表示して危険アクションであることを示す */
+.track-delete:hover,
+.track-delete:active {
+  opacity: 1;
+  color: var(--danger);
+  background: rgba(231, 76, 60, 0.1);
+}
+
+/* ============================================================
+   ドラッグハンドル（並び替え操作用）
+
+   デスクトップ: マウスドラッグ（HTML5 Drag and Drop API）
+   iOS:          長押し（300ms）→ ドラッグ（カスタムタッチ実装）
+
+   6点ドットアイコン（::）で視覚的に並び替え可能であることを示す
+   ============================================================ */
+.drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  color: var(--text-secondary);
+  opacity: 0.4;
+  padding: 4px 2px;
+  flex-shrink: 0;
+  /* タッチスクロールをキャンセルしてドラッグに専念 */
+  touch-action: none;
+  transition: opacity 0.2s;
+}
+
+/* ホバー・ドラッグ中は不透明にして視認性を上げる */
+.drag-handle:hover,
+.drag-handle:active {
+  opacity: 0.9;
+  cursor: grabbing;
+}
+
+/* ============================================================
+   再生無効化トグルボタン（スピーカーアイコン）
+
+   有効: スピーカーONアイコン（音波が出ている） + アクセント色
+   無効: スピーカーOFFアイコン（×付き）     + グレー
+   ============================================================ */
+.track-toggle {
+  background: none;
+  border: none;
+  color: var(--accent-light);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.track-toggle:hover,
+.track-toggle:active {
+  opacity: 1;
+  background: rgba(108, 92, 231, 0.15);
+}
+
+/* 無効化されたトラックのトグルボタン（グレーで表示） */
+.playlist-item.disabled .track-toggle {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+/* ============================================================
+   無効化されたトラック
+
+   半透明 + 曲名に取り消し線でスキップされることを視覚的に示す
+   ============================================================ */
+.playlist-item.disabled {
+  opacity: 0.45;
+}
+
+.playlist-item.disabled .track-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--text-secondary);
+}
+
+/* 無効化トラックはクリックしても再生されないためカーソルをデフォルトに */
+.playlist-item.disabled .track-info {
+  cursor: default;
+}
+
+/* ============================================================
+   ドラッグ中のアニメーション
+
+   ドラッグ元アイテム: 半透明にして「移動中」を示す
+   フローティングクローン: 指に追従する影付きコピー
+   ============================================================ */
+
+/* ドラッグ開始したアイテム（元の位置に残る半透明コピー） */
+.playlist-item.dragging {
+  opacity: 0.3;
+}
+
+/* HTML5 DnD のゴースト用 */
+.playlist-item.drag-ghost {
+  opacity: 0.3;
+}
+
+/* タッチドラッグ時のフローティングクローン（JSで position:fixed に設定） */
+.playlist-item.drag-clone {
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  opacity: 0.9;
+  width: calc(100% - 16px);
+}
+
+/* ============================================================
+   ドロップインジケーター
+
+   ドラッグホバー中に「ここに挿入される」位置を示すライン
+   上半分にホバー → drop-above（上に挿入）
+   下半分にホバー → drop-below（下に挿入）
+   ============================================================ */
+.playlist-item.drop-above {
+  border-top: 2px solid var(--accent-light);
+  margin-top: 0;
+}
+
+.playlist-item.drop-below {
+  border-bottom: 2px solid var(--accent-light);
+  margin-bottom: 0;
+}
+
+/* ============================================================
+   空のプレイリスト表示
+   トラックが1件もない初期状態に表示するプレースホルダー
+   ============================================================ */
+.empty-playlist {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+}
+
+/* 大きな音符アイコン */
+.empty-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.empty-playlist p {
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.empty-hint {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+/* ============================================================
+   トースト通知
+
+   画面下部から一時的に表示されるメッセージUI
+   - success: 緑（インポート完了など）
+   - error:   赤（再生エラーなど）
+   - warn:    黄（警告）
+   - info:    紫（一般的な情報）
+   ============================================================ */
+.toast {
+  position: fixed;
+  bottom: calc(20px + var(--safe-bottom)); /* ホームバーの上に表示 */
+  left: 50%;
+  transform: translateX(-50%) translateY(100px); /* 非表示時は画面外に */
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  z-index: 1000;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none; /* トーストクリックを下のUIに透過 */
+  max-width: 90%;
+  text-align: center;
+}
+
+/* 表示中のトースト（JSで .show クラスを付与） */
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 種別ごとのボーダー色 */
+.toast.success { border-color: var(--success); }
+.toast.error   { border-color: var(--danger);  }
+.toast.warn    { border-color: var(--warning); }
+.toast.info    { border-color: var(--accent);  }
+
+/* ============================================================
+   PWA インストールバナー
+
+   beforeinstallprompt イベント発火時に画面下部からスライドアップ
+   「インストール」ボタンでホーム画面への追加を促す
+   ============================================================ */
+.install-banner {
+  position: fixed;
+  bottom: -80px;           /* 非表示時は画面外に配置 */
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--accent);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 200;
+  transition: bottom 0.3s ease; /* スライドアップアニメーション */
+}
+
+/* 表示中（JSで .show クラスを付与） */
+.install-banner.show {
+  bottom: 0;
+}
+
+.install-banner p {
+  font-size: 0.8rem;
+}
+
+.install-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.install-actions button {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  cursor: pointer;
+  border: none;
+  font-weight: 600;
+}
+
+/* インストールボタン（紫） */
+#installBtn {
+  background: var(--accent);
+  color: white;
+}
+
+/* 閉じるボタン（透明・グレーテキスト） */
+#dismissInstall {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* ============================================================
+   ファイル入力（非表示）
+   ネイティブのファイル選択ダイアログを利用するため、
+   input[type=file] は視覚的に非表示にして「追加」ボタンから呼び出す
+   ============================================================ */
+.file-input-hidden {
+  display: none;
+}
+
+/* ============================================================
+   カスタムスクロールバー（WebKit: Chrome/Safari）
+   細くシンプルなデザインでプレイリストに溶け込ませる
+   ============================================================ */
+.playlist::-webkit-scrollbar {
+  width: 4px;
+}
+
+.playlist::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.playlist::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+/* ============================================================
+   レスポンシブ対応
+   タブレット以上（768px〜）: ビジュアライザーを少し高くする
+   ============================================================ */
+@media (min-width: 768px) {
+  .visualizer-container {
+    height: 160px;
+  }
+
+  .main-content {
+    padding: 0 16px;
+  }
+}
+
+/* ============================================================
+   iOS PWA スタンドアロンモード対応
+
+   display: standalone のとき（ホーム画面から起動時）、
+   ヘッダーを Dynamic Island / ステータスバー分だけ下げる
+   ============================================================ */
+@media (display-mode: standalone) {
+  .header {
+    padding-top: calc(12px + var(--safe-top));
+  }
+}

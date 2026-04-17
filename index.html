@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<!--
+  index.html - PWA MP3 Player メインページ
+
+  【概要】
+  WebAssembly を活用した高性能 PWA（Progressive Web App）MP3プレイヤー。
+  GitHub Pages など静的ホスティングで配信可能で、
+  iPhone/Android のホーム画面にインストールしてオフライン再生できる。
+
+  【PWA対応のポイント】
+  - <link rel="manifest"> でインストール情報を定義
+  - Service Worker (sw.js) がオフラインキャッシュを管理
+  - iOS では <meta name="apple-mobile-web-app-capable"> が必須
+  - <meta name="viewport" content="...user-scalable=no"> でネイティブアプリ感を演出
+
+  【iOS バックグラウンド再生の仕組み】
+  AudioContext を音声経路に使わず <audio> 要素で直接再生することで
+  ロック画面・バックグラウンドでも音声が継続する。
+  Media Session API によりロック画面のコントロール表示も対応。
+
+  【ファイル構成】
+  index.html         ← このファイル（UI構造）
+  style.css          ← ダークテーマのスタイルシート
+  app.js             ← メインロジック（IndexedDB/AudioEngine/PlayerUI）
+  wasm-audio.js      ← WebAssembly オーディオ処理（RMS/Peak/Spectrum）
+  audio-processor.js ← AudioWorklet プロセッサ（将来利用）
+  manifest.json      ← PWA マニフェスト
+  sw.js              ← Service Worker（Cache First 戦略）
+  icons/             ← アプリアイコン（192px・512px）
+-->
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+
+  <!--
+    viewport 設定
+    - width=device-width: デバイス幅に合わせる
+    - initial-scale=1.0: 初期ズーム倍率
+    - viewport-fit=cover: iPhone のノッチ・Dynamic Island 領域まで拡張
+    - user-scalable=no: ユーザーによるピンチズームを無効化（アプリらしく）
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+
+  <title>PWA MP3 Player</title>
+  <meta name="description" content="WebAssembly高性能MP3プレイヤー。オフライン再生・ロック画面操作対応のPWA。">
+
+  <!-- ============================================================
+       PWA 設定
+       manifest.json でアプリ名・アイコン・スタンドアロンモードを定義
+       theme-color はブラウザのアドレスバーの色（Android Chrome で反映）
+  ============================================================ -->
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#16213e">
+
+  <!-- ============================================================
+       iOS PWA 対応（Safari 固有の meta タグ）
+
+       apple-mobile-web-app-capable:
+         "yes" にするとホーム画面から起動時にフルスクリーン表示になる
+         （ブラウザのナビゲーションバーが非表示になる）
+
+       apple-mobile-web-app-status-bar-style:
+         "black-translucent" でステータスバーが半透明になり、
+         viewport-fit=cover と組み合わせてノッチ下まで表示できる
+
+       apple-mobile-web-app-title:
+         ホーム画面アイコンの下に表示されるアプリ名
+
+       apple-touch-icon:
+         iOS ホーム画面に追加したときのアイコン画像
+  ============================================================ -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MP3 Player">
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+
+  <!-- スタイルシート -->
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <!-- ============================================================
+       ヘッダー
+       - 左: アプリロゴ（音符アイコン）+ タイトル
+       - 右: WebAssembly 動作ステータスバッジ
+              初期状態: "Wasm: Standby"（グレー）
+              Wasm初期化完了後: "Wasm: Active"（紫）→ app.js で更新
+  ============================================================ -->
+  <header class="header">
+    <div class="header-title">
+      <div class="logo">♪</div>
+      <span>MP3 Player</span>
+    </div>
+    <!-- JSで .active クラスを付与してアクティブ状態を視覚的に示す -->
+    <span class="wasm-badge" id="wasmStatus">Wasm: Standby</span>
+  </header>
+
+  <!-- ============================================================
+       メインコンテンツ
+       再生コントロール・プレイリストなどのUI全体を格納
+  ============================================================ -->
+  <main class="main-content">
+
+    <!-- ============================================================
+         スペクトラムビジュアライザー
+         Canvas要素に DFT で計算した周波数スペクトラムを棒グラフで描画する。
+         描画は app.js の _drawVisualizer() が requestAnimationFrame ループで行う。
+         サイズは JS 側で devicePixelRatio を考慮して設定する（高解像度対応）。
+    ============================================================ -->
+    <div class="visualizer-container">
+      <canvas id="visualizer"></canvas>
+    </div>
+
+    <!-- ============================================================
+         レベルメーター（RMS / Peak）
+         - RMS（Root Mean Square）: 音圧の実効値、平均的な音量感を表す
+         - Peak: 瞬間最大音量、クリッピング検知などに使用
+         幅は JS の _updateLevelMeter() が毎フレーム style.width で更新する。
+         dBスケール換算: -60dB〜0dB を 0%〜100% に線形マッピング
+    ============================================================ -->
+    <div class="level-meters">
+      <div class="meter">
+        <span class="meter-label">RMS</span>
+        <div class="meter-track">
+          <!-- JSで style.width を更新: `${rmsPercent}%` -->
+          <div class="meter-fill rms" id="rmsLevel"></div>
+        </div>
+      </div>
+      <div class="meter">
+        <span class="meter-label">Peak</span>
+        <div class="meter-track">
+          <!-- JSで style.width を更新: `${peakPercent}%` -->
+          <div class="meter-fill peak" id="peakLevel"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         再生中トラック情報
+         JSの _playTrackAtIndex() が track.name を textContent に設定する。
+         長い曲名は CSS の text-overflow: ellipsis で省略表示。
+    ============================================================ -->
+    <div class="now-playing">
+      <div class="track-title" id="trackTitle">トラック未選択</div>
+    </div>
+
+    <!-- ============================================================
+         シークバー
+         構造:
+           #seekBar（タッチ可能な広いヒット領域 h=28px）
+             └ .seek-track（細い溝 h=4px）
+                 ├ #seekProgress（再生済み部分、幅をJSで動的更新）
+                 └ #seekHandle（ドラッグハンドル、左位置をJSで動的更新）
+
+         インタラクション:
+         - マウス: mousedown/mousemove/mouseup
+         - タッチ: touchstart/touchmove/touchend（touch-action:none で制御）
+         - ドラッグ中は isSeeking フラグをtrueにしてUI更新を一時停止
+    ============================================================ -->
+    <div class="seek-container">
+      <div class="seek-bar" id="seekBar">
+        <div class="seek-track">
+          <!-- 再生済み部分（グラデーションバー） -->
+          <div class="seek-progress" id="seekProgress"></div>
+          <!-- ドラッグハンドル（丸いノブ） -->
+          <div class="seek-handle" id="seekHandle"></div>
+        </div>
+      </div>
+      <!-- 時間表示: "1:23 / 4:56" 形式 -->
+      <div class="time-display">
+        <span id="currentTime">0:00</span>
+        <span id="duration">0:00</span>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         再生コントロールボタン群
+         配置: [シャッフル] [前へ] [再生/一時停止] [次へ] [リピート]
+
+         シャッフル: ランダム順で有効トラックを再生
+         前へ: 再生3秒以内なら前トラック、3秒超なら先頭に戻す
+         再生/一時停止: SVGアイコンをJSで動的に入れ替え
+         次へ: 次の有効トラック（無効化トラックをスキップ）
+         リピート: 現在のトラックをループ再生
+    ============================================================ -->
+    <div class="controls">
+      <!-- シャッフルボタン: .active クラスでON/OFFを視覚的に表示 -->
+      <button class="ctrl-btn" id="shuffleBtn" aria-label="シャッフル">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/>
+          <polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/>
+          <line x1="4" y1="4" x2="9" y2="9"/>
+        </svg>
+      </button>
+
+      <!-- 前のトラックボタン -->
+      <button class="ctrl-btn" id="prevBtn" aria-label="前のトラック">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+          <polygon points="19,20 9,12 19,4"/><rect x="5" y="4" width="2" height="16"/>
+        </svg>
+      </button>
+
+      <!--
+        再生/一時停止ボタン（大）
+        JSの _updatePlayPauseButton() がSVGアイコンを動的に入れ替える:
+        - 再生中: ■■（一時停止アイコン）
+        - 停止中: ▶（再生アイコン）
+      -->
+      <button class="ctrl-btn play-pause" id="playPauseBtn" aria-label="再生">
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+          <polygon points="5,3 19,12 5,21"/>
+        </svg>
+      </button>
+
+      <!-- 次のトラックボタン -->
+      <button class="ctrl-btn" id="nextBtn" aria-label="次のトラック">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+          <polygon points="5,4 15,12 5,20"/><rect x="17" y="4" width="2" height="16"/>
+        </svg>
+      </button>
+
+      <!-- リピートボタン: .active クラスでON/OFFを視覚的に表示 -->
+      <button class="ctrl-btn" id="repeatBtn" aria-label="リピート">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/>
+          <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- ============================================================
+         ボリュームコントロール
+         - スピーカーアイコン: クリックでミュートトグル（JSでSVGを入れ替え）
+         - スライダー: 0.0〜1.0 の範囲で音量を連続調整
+           input イベントで engine.setVolume() を呼び出す
+    ============================================================ -->
+    <div class="volume-container">
+      <!-- クリックでミュート切り替え。音量に応じてアイコンが変化（JSで管理） -->
+      <button class="volume-icon" id="volumeIcon" aria-label="ボリューム">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/>
+        </svg>
+      </button>
+      <!--
+        ボリュームスライダー
+        min=0, max=1, step=0.01 で精細な音量調整が可能
+        初期値: 1.0（最大音量）
+      -->
+      <input type="range" class="volume-slider" id="volumeSlider"
+             min="0" max="1" step="0.01" value="1">
+    </div>
+
+    <!-- ============================================================
+         停止ボタン
+         一時停止ではなく完全停止（再生位置を先頭に戻す）。
+         再生/一時停止とは別に、確実にゼロリセットしたい場合に使用。
+    ============================================================ -->
+    <div style="text-align:center; margin-bottom:8px;">
+      <button class="ctrl-btn" id="stopBtn" aria-label="停止" style="display:inline-flex;">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" rx="1"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- ============================================================
+         ライブラリ（プレイリスト）セクション
+         IndexedDB に保存された MP3 ファイルの一覧を表示する。
+
+         各トラック行の構成:
+           [ドラッグハンドル] [番号] [アートワーク] [曲名/サイズ] [有効化トグル] [削除]
+
+         機能:
+         - クリックで再生
+         - ドラッグ（PC は D&D API / iOS は長押しタッチ）で並び替え
+         - スピーカーアイコンで一時的な再生無効化
+         - ゴミ箱アイコンで削除（IndexedDB からも完全削除）
+
+         #playlist の内容は JS の _renderPlaylist() が動的に生成する。
+    ============================================================ -->
+    <section class="playlist-section">
+      <div class="playlist-header">
+        <div>
+          <h2>ライブラリ</h2>
+          <!-- "有効曲数/総曲数" 形式で表示（例: 5/7曲） -->
+          <span class="track-count" id="trackCount">0曲</span>
+        </div>
+        <!-- クリックで隠し <input type="file"> を起動 -->
+        <button class="add-btn" id="addButton">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          ファイルを追加
+        </button>
+      </div>
+      <!-- JS の _renderPlaylist() がここにトラックリストを動的挿入 -->
+      <div class="playlist" id="playlist"></div>
+    </section>
+
+  </main>
+
+  <!-- ============================================================
+       ファイル入力（非表示）
+       「ファイルを追加」ボタンのクリックで .click() を呼び出す。
+       accept=".mp3,audio/mpeg" で MP3 ファイルのみ選択可能。
+       multiple 属性で複数ファイルを一度に選択できる。
+       iOS の Files アプリや写真アプリからも選択可能。
+  ============================================================ -->
+  <input type="file" id="fileInput" class="file-input-hidden"
+         accept=".mp3,audio/mpeg" multiple>
+
+  <!-- ============================================================
+       トースト通知
+       操作結果（インポート完了・エラー・削除など）を画面下部に一時表示。
+       JS の _showToast(message, type) で表示制御を行う。
+       type: 'info' | 'success' | 'warn' | 'error'
+  ============================================================ -->
+  <div class="toast" id="toast"></div>
+
+  <!-- ============================================================
+       PWA インストールバナー
+       beforeinstallprompt イベント発火時（Android Chrome のみ）に
+       .show クラスが付与されて画面下部からスライドアップ表示される。
+       「インストール」ボタンでホーム画面への追加プロンプトを表示。
+       ※ iOS は beforeinstallprompt が発火しないためこのバナーは表示されない
+         （iOS では Safari の「共有」→「ホーム画面に追加」で手動インストール）
+  ============================================================ -->
+  <div class="install-banner" id="installBanner">
+    <p>ホーム画面に追加してオフラインで使用</p>
+    <div class="install-actions">
+      <button id="installBtn">インストール</button>
+      <button id="dismissInstall">閉じる</button>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       スクリプト読み込み
+       読み込み順が重要:
+       1. wasm-audio.js: WasmAudioProcessor クラスをグローバルに定義
+       2. app.js: WasmAudioProcessor を参照するため、後から読み込む
+
+       どちらも DOMContentLoaded イベントで初期化するため、
+       defer なしでも問題なく動作する。
+  ============================================================ -->
+  <script src="./wasm-audio.js"></script>
+  <script src="./app.js"></script>
+
+</body>
+</html>
